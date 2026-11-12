@@ -1,0 +1,7 @@
+numpy>=1.23
+pillow>=10.1        # ImageFont.load_default(size)
+opencv-python>=4.7  # epicycles + shapes drawing
+torch>=2.0          # splat + neural (Apple GPU via MPS, CUDA, or CPU)
+matplotlib          # only for the bundled public-domain sample portrait
+pytest              # tests
+# also needs the ffmpeg binary on PATH
