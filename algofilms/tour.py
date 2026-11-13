@@ -28,7 +28,7 @@ def _catmull(p0, p1, p2, p3, t):
 class Path:
     """Stops -> camera state (cx, cy, w) at any time. Zoom is interpolated in log space."""
 
-    def __init__(self, stops, speed: float = 0.20, min_move: float = 1.4, ease: float = 0.65):
+    def __init__(self, stops, speed: float = 0.20, min_move: float = 1.4, ease: float = 0.65, schedule=None):
         self.P = np.array([[s[0], s[1], math.log(s[2])] for s in stops], np.float64)
         self.hold = [s[3] if len(s) > 3 else 0.0 for s in stops]
         self.ease = ease
@@ -42,6 +42,10 @@ class Path:
                 dur = max(min_move, d / speed)
                 self.seg.append((t, dur)); t += dur
         self.duration = t
+        if schedule:              # explicit (arrive, depart) seconds per stop, e.g. to land on narration cues
+            self.times = [tuple(x) for x in schedule]
+            self.seg = [(schedule[i][1], max(0.05, schedule[i + 1][0] - schedule[i][1])) for i in range(len(stops) - 1)]
+            self.duration = schedule[-1][1]
 
     def at(self, t: float):
         t = min(max(t, 0.0), self.duration)
@@ -68,7 +72,7 @@ class Path:
 
 def run(image: str, out: str, stops, fmt: str = "9:16", fps: int = 30, speed: float = 0.20, blur_samples: int = 4,
         keystone: float = 0.045, remove_badge: bool = True, depth: str | None = None, parallax: float = 0.40,
-        sway: float = 0.012, log=print) -> dict:
+        sway: float = 0.012, schedule=None, log=print) -> dict:
     W, H = core.FORMATS[fmt]
     src = np.asarray(Image.open(image).convert("RGB"))
     ih, iw = src.shape[:2]
@@ -82,7 +86,7 @@ def run(image: str, out: str, stops, fmt: str = "9:16", fps: int = 30, speed: fl
         pyr.append(cv2.pyrDown(pyr[-1]))
     bg = cv2.GaussianBlur(cv2.resize(src, (W, H), interpolation=cv2.INTER_AREA), (0, 0), 40)
     bg = (bg.astype(np.float32) * 0.35).astype(np.uint8)
-    path = Path(stops, speed)
+    path = Path(stops, speed, schedule=schedule)
     D = None
     if depth:                                    # disparity map in 0..1 (1 = near), e.g. from Depth Anything
         D = np.load(depth).astype(np.float32) if depth.endswith(".npy") else np.asarray(Image.open(depth).convert("L"), np.float32) / 255
