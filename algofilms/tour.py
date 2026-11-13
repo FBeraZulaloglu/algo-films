@@ -67,7 +67,8 @@ class Path:
 
 
 def run(image: str, out: str, stops, fmt: str = "9:16", fps: int = 30, speed: float = 0.20, blur_samples: int = 4,
-        keystone: float = 0.045, remove_badge: bool = True, log=print) -> dict:
+        keystone: float = 0.045, remove_badge: bool = True, depth: str | None = None, parallax: float = 0.40,
+        sway: float = 0.012, log=print) -> dict:
     W, H = core.FORMATS[fmt]
     src = np.asarray(Image.open(image).convert("RGB"))
     ih, iw = src.shape[:2]
@@ -82,10 +83,53 @@ def run(image: str, out: str, stops, fmt: str = "9:16", fps: int = 30, speed: fl
     bg = cv2.GaussianBlur(cv2.resize(src, (W, H), interpolation=cv2.INTER_AREA), (0, 0), 40)
     bg = (bg.astype(np.float32) * 0.35).astype(np.uint8)
     path = Path(stops, speed)
+    D = None
+    if depth:                                    # disparity map in 0..1 (1 = near), e.g. from Depth Anything
+        D = np.load(depth).astype(np.float32) if depth.endswith(".npy") else np.asarray(Image.open(depth).convert("L"), np.float32) / 255
+        D = cv2.dilate(D, np.ones((5, 5), np.uint8))               # near things keep their edges when they slide
+        D = cv2.GaussianBlur(D, (0, 0), 2.0)
+        qx, qy = np.meshgrid((np.arange(W, dtype=np.float32) + 0.5) / W - 0.5, (np.arange(H, dtype=np.float32) + 0.5) / H - 0.5)
+        dh, dw = D.shape
     aspect = W / H
     max_w = (ih * aspect) / iw                    # widest window that still fits the image height
 
+    def focus_depth(t):
+        """Depth the camera is looking at, averaged over +-0.6 s so it glides instead of jumping."""
+        v = []
+        for k in np.linspace(-0.6, 0.6, 7):
+            cx, cy, w = path.at(t + k)
+            x = int(min(max(cx, 0), 1) * (dw - 1)); y = int(min(max(cy, 0), 1) * (dh - 1))
+            v.append(float(D[max(0, y - 6):y + 7, max(0, x - 6):x + 7].mean()))
+        return sum(v) / len(v)
+
+    def frame_parallax(t):
+        """Every pixel slides by an amount that depends on its depth relative to what the camera looks at:
+        near things sweep past faster than far ones, as they do for a camera that really moves."""
+        cx, cy, w = path.at(t)
+        ww = w * iw; wh = ww / aspect
+        if w <= max_w:
+            cx = min(max(cx, w / 2), 1 - w / 2); hh = wh / ih; cy = min(max(cy, hh / 2), 1 - hh / 2)
+        d0 = focus_depth(t)
+        g = parallax * min(1.0, max_w / w) ** 0.5            # less effect once pulled far back
+        ox = sway * iw * math.sin(t * 0.55); oy = sway * 0.4 * iw * math.sin(t * 0.37 + 1.0)   # slow drift, no shake
+        sx = cx * iw + qx * ww; sy = cy * ih + qy * wh       # first guess: no parallax
+        for _ in range(3):                                   # fixed-point: depth is read where the pixel comes from
+            d = cv2.remap(D, sx * (dw / iw), sy * (dh / ih), cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+            m = 1 + g * (d - d0)
+            sx = cx * iw + qx * ww / m - ox * (d - d0) * g * 2.5
+            sy = cy * ih + qy * wh / m - oy * (d - d0) * g * 2.5
+        lvl = int(min(len(pyr) - 1, max(0, math.floor(math.log2(max(1.0, ww / W))))))
+        sc = 1 / (2 ** lvl)
+        img = cv2.remap(pyr[lvl], sx * sc, sy * sc, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+        if w > max_w * 1.001:
+            inside = ((sx >= 0) & (sx < iw) & (sy >= 0) & (sy < ih)).astype(np.float32)
+            a = cv2.GaussianBlur(inside, (0, 0), 1.2)[..., None]
+            img = (img * a + bg * (1 - a)).astype(np.uint8)
+        return img
+
     def frame_at(t, vx):
+        if D is not None:
+            return frame_parallax(t)
         cx, cy, w = path.at(t)
         ww = w * iw; wh = ww / aspect
         if w <= max_w:                            # keep the window inside the picture
@@ -144,5 +188,7 @@ if __name__ == "__main__":
     ap.add_argument("--stops", required=True); ap.add_argument("--format", default="9:16")
     ap.add_argument("--speed", type=float, default=0.20); ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--keep-badge", action="store_true")
+    ap.add_argument("--depth", default=None, help="disparity map (.npy or image, bright = near) for real parallax")
+    ap.add_argument("--parallax", type=float, default=0.40)
     a = ap.parse_args()
-    print(run(a.image, a.out, parse_stops(a.stops), a.format, a.fps, a.speed, remove_badge=not a.keep_badge))
+    print(run(a.image, a.out, parse_stops(a.stops), a.format, a.fps, a.speed, remove_badge=not a.keep_badge, depth=a.depth, parallax=a.parallax))
