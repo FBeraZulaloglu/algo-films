@@ -6,7 +6,7 @@
   <img src="docs/media/splat.gif" width="560" alt="Blobs of colour learn a photo by gradient descent">
 </p>
 
-Six tools, one command each. Every one renders a finished MP4 (16:9, 9:16, 1:1 or 4:5) with a HUD of the real numbers, a "which one is the photo?" beat, a title card and a generated soundtrack that follows the error curve.
+Six film tools, one command each, plus four lab tools (further down) that turn the same ideas into stills, edits, camera moves and a 3D bust. Every film tool renders a finished MP4 (16:9, 9:16, 1:1 or 4:5) with a HUD of the real numbers, a "which one is the photo?" beat, a title card and a generated soundtrack that follows the error curve.
 
 | | Tool | What you watch | Laptop time* |
 |---|---|---|---|
@@ -37,6 +37,35 @@ python3 -m algofilms shapes my-photo.jpg -o shapes.mp4
 Common options: `--format 16:9|9:16|1:1|4:5`, `--seconds 20`, `--fps 30`, `--accent "#e63946"`, `--focus 0.5,0.4` (crop centre), `--no-sound`. Each tool has its own knobs (`--steps`, `--blobs`, `--nails`, `--lines`, `--circles`, `--shapes`, `--grid`, `--target`); see `python3 -m algofilms <tool> -h`.
 
 `scripts/render_demos.sh` renders every demo one after another and cuts the README GIFs.
+
+## Lab tools
+
+Four more tools that reuse the same pieces (the blob painter, the triangle fitter, the film writer). They run as modules rather than subcommands and write a folder of stills and short clips instead of one finished film.
+
+| | Tool | What it makes | Laptop time* |
+|---|---|---|---|
+| <img src="docs/media/stylelab.gif" width="160"> | `stylelab` | One photo in 13 classic looks (duotone, halftone, risograph, pencil, toon, oil paint, pixel art, engraving, neon lines, low poly, ASCII, thermal, glitch), a contact sheet, edits that only work once the photo is blobs (swap the background, recolour the shirt, swirl, melt), and a 9:16 reel that wipes through them | ~8 min (~25 s with `--no-blobs`) |
+| <img src="docs/media/lab.gif" width="160"> | `lab` | Images made by editing a trained blob painting: `styles` (triangle vector art as SVG, string art, a low-blob painting), `edits` (duotone palettes, the blobs exploding and reassembling), `poses` (blobs trained on photo A keep training on photo B; blending the two sets of numbers gives in-between frames nobody photographed) | ~1.5 min per mode |
+| <img src="docs/media/tour.gif" width="160"> | `tour` | A virtual camera flies through one large still (a wide interior, a painting, a map), stopping at points you choose, then pulls back to show the whole picture. Pure geometry: spline path, zoom in log space, a slight keystone in the direction of travel, motion blur from sub-frame samples | ~1 s per second of film |
+| <img src="docs/media/lowpoly3d.gif" width="160"> | `lowpoly3d` | A photo becomes ~5,000 coloured triangles that fly in from a cloud, lock into the flat picture, then inflate into a 3D bust while the wall falls away. Python writes the mesh and a per-frame vertex cache; `blender/lowpoly_scene.py` lights it and orbits the camera | <1 min + Blender render |
+
+```bash
+python3 -m algofilms.stylelab my-photo.jpg --out out/stylelab          # add a second photo of the same face for in-between expressions
+python3 -m algofilms.lab edits my-photo.jpg --out out/lab               # styles | edits | poses a.jpg b.jpg | all
+python3 -m algofilms.tour wide.png -o tour.mp4 --stops "0.86,0.72,0.15,0.8; 0.55,0.42,0.22; 0.33,0.50,0.13,1.0"
+python3 -m algofilms.lowpoly3d my-photo.jpg --out out/lowpoly3d
+/Applications/Blender.app/Contents/MacOS/Blender -b --python blender/lowpoly_scene.py -- out/lowpoly3d "#d7263d"
+```
+
+Notes on the demos above:
+
+- `stylelab` and `lab` were run on the sample portrait. The `lab` clip is the `edits` explode shot.
+- `tour` stops are `x,y,width[,hold]`: centre in 0..1 of the image, window width as a fraction of the image width, optional hold in seconds. The demo input is a wide café still made with an image model; the camera move itself is plain geometry. `--depth` takes a disparity map if you have one, for real parallax.
+- `lowpoly3d` has no depth model: the relief is a guess (distance from the silhouette edge plus a bulge at the face), and the silhouette is found by its colour difference from the wall. It needs a portrait against a plain wall; on a busy background (the flag behind the sample portrait, for example) the whole frame inflates and there is no bust. The demo is the author's own photo.
+
+<p align="center">
+  <img src="docs/media/stylelab-sheet.jpg" width="720" alt="The sample portrait in 13 classic styles, all made with code">
+</p>
 
 ## Why this format works
 
@@ -82,6 +111,7 @@ python3 -m pytest -q        # 18 tests, ~4 min: maths checks + every tool render
 ## Credits
 
 - Inspired by [sirioberati/gradient-descent-for-a-face](https://github.com/sirioberati/gradient-descent-for-a-face). All code here is written from scratch.
+- See also [sirioberati/ai-video-in-code](https://github.com/sirioberati/ai-video-in-code), which turns a short AI clip into real 3D Gaussian splats (COLMAP + Brush) and films camera moves that were never shot. `tour` fakes that move on a single still; that repo solves it in 3D.
 - Sample portrait: Grace Hopper, U.S. Navy official photo (public domain), as bundled with matplotlib.
 - Written with Claude Code.
 
